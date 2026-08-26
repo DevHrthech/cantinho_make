@@ -1,0 +1,12 @@
+---
+description: Use AppLoadingIndicator for loading states (not CircularProgressIndicator).
+globs: lib/**/*.dart
+alwaysApply: false
+---
+
+# Indicador de carregamento
+
+Para qualquer estado de espera (telas cheias, botões, listas, diálogos), use `AppLoadingIndicator` de `lib/widgets/app_loading_indicator.dart`.
+
+- Não use `CircularProgressIndicator` para loading, exceto dentro do próprio `AppLoadingIndicator` (fallback se o asset falhar) ou para **barras/anéis determinísticos** que mostram **proporção/percentual fixo** (ex.: gráfico de capacidade), não “aguarde carregando”.
+- Tamanhos comuns: botões ~22–24; telas cheias ~48; destaque ~36.
