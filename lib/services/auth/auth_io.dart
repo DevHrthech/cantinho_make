@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart';
 import '../../models/session_user.dart';
 import '../../models/user_role.dart';
 import '../local_db.dart';
+import '../users_sync.dart';
 
 abstract final class AuthService {
   static Future<SessionUser?> login({
@@ -13,17 +14,14 @@ abstract final class AuthService {
     final s = senha;
     if (t.isEmpty || s.isEmpty) return null;
 
-    final db = (await LocalDb.instance.database) as Database;
-    final rows = await db.query(
-      'usuarios',
-      columns: const ['nome', 'deposito', 'perfil', 'status', 'telefone'],
-      where: 'telefone = ? AND senha = ?',
-      whereArgs: [t, s],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
+    var r = await _findUsuario(t, s);
+    if (r == null || !_isAtivo((r['status'] ?? '').toString())) {
+      // A sincronização de usuários pode ainda estar rodando desde a abertura do app.
+      await UsersSyncService.waitForPending();
+      r = await _findUsuario(t, s);
+    }
+    if (r == null) return null;
 
-    final r = rows.first;
     final status = (r['status'] ?? '').toString();
     if (!_isAtivo(status)) return null;
 
@@ -42,6 +40,18 @@ abstract final class AuthService {
       perfil: perfil,
       role: role,
     );
+  }
+
+  static Future<Map<String, Object?>?> _findUsuario(String telefone, String senha) async {
+    final db = (await LocalDb.instance.database) as Database;
+    final rows = await db.query(
+      'usuarios',
+      columns: const ['nome', 'deposito', 'perfil', 'status', 'telefone'],
+      where: 'telefone = ? AND senha = ?',
+      whereArgs: [telefone, senha],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   static bool _isAtivo(String status) {

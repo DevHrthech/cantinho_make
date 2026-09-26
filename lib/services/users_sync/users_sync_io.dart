@@ -6,6 +6,21 @@ import '../query_api.dart';
 class UsersSyncService {
   const UsersSyncService();
 
+  static Future<void>? _inFlight;
+
+  /// Inicia a sincronização sem bloquear quem chamou. Falhas são ignoradas:
+  /// o login continua usando os usuários já salvos no aparelho.
+  static void startInBackground() {
+    _inFlight ??= const UsersSyncService()
+        .syncUsuarios()
+        .timeout(const Duration(seconds: 20))
+        .then<void>((_) {}, onError: (_) {})
+        .whenComplete(() => _inFlight = null);
+  }
+
+  /// Aguarda a sincronização em andamento, se houver.
+  static Future<void> waitForPending() => _inFlight ?? Future.value();
+
   static const String _sql =
       'SELECT nome, email, senha, telefone, cpf, cidade, deposito, perfil, status FROM usuarios';
 
