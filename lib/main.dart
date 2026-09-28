@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'app.dart';
 import 'services/local_db.dart';
-import 'services/users_sync.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,7 +15,5 @@ Future<void> main() async {
     yield LicenseEntryWithLineBreaks(['google_fonts'], license);
   });
   await LocalDb.instance.init();
-  // Não bloqueia a abertura esperando a rede; o login aguarda se precisar.
-  UsersSyncService.startInBackground();
   runApp(const CantinhoApp());
 }

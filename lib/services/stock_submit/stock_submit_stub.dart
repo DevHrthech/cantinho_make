@@ -6,12 +6,9 @@ import '../../models/stock_submit_outcome.dart';
 class StockSubmitService {
   const StockSubmitService();
 
-  static Future<int> fetchNextIdVenda() async => 1;
-
   Future<StockSubmitOutcome> concludeSaida({
     required SessionUser user,
     required List<ScannedLine> lines,
-    int? idVenda,
     String? tipoPagamento,
     double? valorRecebido,
     String? desconto,

@@ -8,7 +8,7 @@ import '../../models/scanned_line.dart';
 import '../../models/session_user.dart';
 import '../../models/stock_submit_outcome.dart';
 import '../local_db.dart';
-import '../query_api.dart';
+import '../api_client.dart';
 import '../../utils/friendly_error_message.dart';
 
 class StockSubmitService {
@@ -20,22 +20,6 @@ class StockSubmitService {
   static const _quotedVenda = '"saidaProduto"';
   static const _quotedInv = 'inventarioproduto';
 
-  /// Próximo `id_venda` no servidor: `MAX(id_venda) + 1` (mínimo 1).
-  static Future<int> fetchNextIdVenda() async {
-    final payload = await QueryApi.postSql(
-      'SELECT COALESCE(MAX(id_venda), 0) AS m FROM VendaProdutos',
-    );
-    final rows = QueryApi.coerceRows(payload);
-    if (rows.isEmpty) return 1;
-    final raw = rows.first['m'] ?? rows.first['M'];
-    final n = switch (raw) {
-      int i => i,
-      num x => x.toInt(),
-      _ => int.tryParse('$raw') ?? 0,
-    };
-    return n + 1;
-  }
-
   String _batchId() =>
       '${DateTime.now().millisecondsSinceEpoch}_${100000 + Random().nextInt(900000)}';
 
@@ -44,7 +28,6 @@ class StockSubmitService {
   Future<StockSubmitOutcome> concludeSaida({
     required SessionUser user,
     required List<ScannedLine> lines,
-    int? idVenda,
     String? tipoPagamento,
     double? valorRecebido,
     String? desconto,
@@ -53,18 +36,17 @@ class StockSubmitService {
       user: user,
       lines: lines,
       quotedTable: _quotedVenda,
-      idVenda: idVenda,
       tipoPagamento: tipoPagamento,
       valorRecebido: valorRecebido,
       desconto: desconto,
-      insertRemoteSql: (d, u, dep, ls, vr, desc) => _insertVendaSql(
+      enviar: (lote, d, u, dep, ls) => _enviarVenda(
+        lote,
         d,
         u,
         dep,
         ls,
-        idVenda: idVenda,
         tipoPagamento: tipoPagamento,
-        desconto: desc,
+        desconto: desconto,
       ),
     );
   }
@@ -77,8 +59,7 @@ class StockSubmitService {
       user: user,
       lines: lines,
       quotedTable: _quotedInv,
-      insertRemoteSql: (d, u, dep, ls, vr, desc) =>
-          _insertInventarioSql(d, u, dep, ls),
+      enviar: _enviarInventario,
     );
   }
 
@@ -86,19 +67,10 @@ class StockSubmitService {
     required SessionUser user,
     required List<ScannedLine> lines,
     required String quotedTable,
-    int? idVenda,
     String? tipoPagamento,
     double? valorRecebido,
     String? desconto,
-    required String Function(
-      String dia,
-      String usuario,
-      String deposito,
-      List<ScannedLine> lines,
-      double? valorRecebido,
-      String? desconto,
-    )
-        insertRemoteSql,
+    required _Enviar enviar,
   }) async {
     final loteId = _batchId();
     final dia = _today();
@@ -138,7 +110,7 @@ class StockSubmitService {
               line.quantity,
               line.unitPrice,
               user.deposito,
-              idVenda,
+              null, // id_venda: definido pelo servidor no envio
               tipoPagamento,
               line.unitPrice,
               line.lineTotal,
@@ -171,15 +143,35 @@ class StockSubmitService {
       }
     });
 
-    final sql = insertRemoteSql(dia, user.displayName, user.deposito, lines, valorRecebido, desconto);
+    return _send(
+      db: db,
+      quotedTable: quotedTable,
+      loteId: loteId,
+      remote: () => enviar(loteId, dia, user.displayName, user.deposito, lines),
+    );
+  }
+
+  /// Envia o lote e marca o resultado nas linhas locais.
+  Future<StockSubmitOutcome> _send({
+    required Database db,
+    required String quotedTable,
+    required String loteId,
+    required Future<int?> Function() remote,
+  }) async {
     try {
-      await QueryApi.postSql(sql);
+      final idVenda = await remote();
       await db.rawUpdate(
         'UPDATE $quotedTable SET send = ?, last_error = ?, http_status = ? WHERE lote_id = ?',
         [sendOk, null, null, loteId],
       );
+      if (idVenda != null) {
+        await db.rawUpdate(
+          'UPDATE $quotedTable SET id_venda = ? WHERE lote_id = ?',
+          [idVenda, loteId],
+        );
+      }
       return StockSubmitOutcome.ok(loteId);
-    } on QueryApiException catch (e) {
+    } on ApiException catch (e) {
       final friendly = friendlyErrorMessage(e);
       await db.rawUpdate(
         'UPDATE $quotedTable SET last_error = ?, http_status = ? WHERE lote_id = ?',
@@ -196,75 +188,54 @@ class StockSubmitService {
     }
   }
 
-  String _insertVendaSql(
+  List<Map<String, Object?>> _itens(List<ScannedLine> lines) => lines
+      .map((l) => <String, Object?>{
+            'codigo_interno': l.codigoInterno,
+            'codigo_barra': l.barcode,
+            'produto': l.name,
+            'quantidade': l.quantity,
+            'valor_unitario': l.unitPrice,
+          })
+      .toList();
+
+  /// Retorna o `id_venda` gerado pelo servidor. Reenviar o mesmo lote não duplica.
+  Future<int?> _enviarVenda(
+    String loteId,
     String dia,
     String usuario,
     String deposito,
     List<ScannedLine> lines, {
-    int? idVenda,
     String? tipoPagamento,
     String? desconto,
-  }) {
-    final d = QueryApi.sqlEscape(dia);
-    final u = QueryApi.sqlEscape(usuario);
-    final dep = QueryApi.sqlEscape(deposito);
-    final idSql = idVenda == null ? 'NULL' : '$idVenda';
-    final tpSql =
-        tipoPagamento == null ? 'NULL' : "'${QueryApi.sqlEscape(tipoPagamento)}'";
-    final descSql =
-        desconto == null || desconto.isEmpty ? 'NULL' : "'${QueryApi.sqlEscape(desconto)}'";
-
-    final totalBruto = lines.fold<double>(0, (s, l) => s + l.lineTotal);
-    double? valorDescontoNum;
-    if (desconto != null && desconto.isNotEmpty) {
-      final m = RegExp(r'(\d+(?:[.,]\d+)?)').firstMatch(desconto);
-      if (m != null) {
-        valorDescontoNum = double.tryParse(m.group(1)!.replaceAll(',', '.'));
-      }
-    }
-    final totalVenda = valorDescontoNum == null
-        ? totalBruto
-        : (totalBruto - valorDescontoNum).clamp(0, double.infinity).toDouble();
-    final totalVendaSql = totalVenda.toStringAsFixed(2);
-
-    final tuples = lines
-        .map((line) {
-          final ci = line.codigoInterno;
-          final ciSql = ci == null ? 'NULL' : '$ci';
-          final cb = QueryApi.sqlEscape(line.barcode);
-          final p = QueryApi.sqlEscape(line.name);
-          final vu = line.unitPrice.toStringAsFixed(2);
-          final vt = line.lineTotal.toStringAsFixed(2);
-          return "('$d','$u',$ciSql,'$cb','$p',${line.quantity},'$dep',"
-              "$idSql,$tpSql,$vu,$vt,$descSql,$totalVendaSql)";
-        })
-        .join(', ');
-    return 'INSERT INTO VendaProdutos ('
-        '`dia`, `usuario`, `codigo_interno`, `codigo_barra`, `produto`, `quantidade`, `deposito`, '
-        '`id_venda`, `tipo_pagamento`, `valor_unitario`, `valor_total`, '
-        '`desconto`, `valor_total_venda`'
-        ') VALUES $tuples';
+  }) async {
+    final payload = await ApiClient.post('/vendas', {
+      'lote_id': loteId,
+      'dia': dia,
+      'usuario': usuario,
+      'deposito': deposito,
+      'tipo_pagamento': tipoPagamento,
+      'desconto': (desconto == null || desconto.isEmpty) ? null : desconto,
+      'itens': _itens(lines),
+    });
+    final id = payload is Map ? payload['id_venda'] : null;
+    return id is int ? id : int.tryParse('$id');
   }
 
-  String _insertInventarioSql(
+  Future<int?> _enviarInventario(
+    String loteId,
     String dia,
     String usuario,
     String deposito,
     List<ScannedLine> lines,
-  ) {
-    final d = QueryApi.sqlEscape(dia);
-    final u = QueryApi.sqlEscape(usuario);
-    final dep = QueryApi.sqlEscape(deposito);
-    final tuples = lines
-        .map((line) {
-          final ci = line.codigoInterno;
-          final ciSql = ci == null ? 'NULL' : '$ci';
-          final cb = QueryApi.sqlEscape(line.barcode);
-          final p = QueryApi.sqlEscape(line.name);
-          return "('$d','$u',$ciSql,'$cb','$p',${line.quantity},'$dep')";
-        })
-        .join(', ');
-    return 'INSERT INTO inventarioProduto (`dia`, `usuario`, `codigo_interno`, `codigo_barra`, `produto`, `quantidade`, `deposito`) VALUES $tuples';
+  ) async {
+    await ApiClient.post('/inventario', {
+      'lote_id': loteId,
+      'dia': dia,
+      'usuario': usuario,
+      'deposito': deposito,
+      'itens': _itens(lines),
+    });
+    return null;
   }
 
   Future<List<PendingBatchRow>> listPendingVendas() async =>
@@ -353,16 +324,9 @@ class StockSubmitService {
     final usuario = rows.first['usuario']! as String;
     final deposito = rows.first['deposito']! as String;
 
-    int? idVenda;
     String? tipoPagamento;
     String? desconto;
     if (isVenda) {
-      final rawId = rows.first['id_venda'];
-      if (rawId is int) {
-        idVenda = rawId;
-      } else if (rawId != null) {
-        idVenda = int.tryParse(rawId.toString());
-      }
       final tp = rows.first['tipo_pagamento'];
       if (tp != null && tp.toString().trim().isNotEmpty) {
         tipoPagamento = tp.toString();
@@ -371,54 +335,31 @@ class StockSubmitService {
       if (desc != null && desc.toString().trim().isNotEmpty) {
         desconto = desc.toString();
       }
-      // Vendas da feira gravadas offline vêm sem id; demais vendas seguem com NULL no INSERT.
-      if (idVenda == null && tipoPagamento != null) {
-        try {
-          idVenda = await fetchNextIdVenda();
-        } catch (e) {
-          final friendly = friendlyErrorMessage(e);
-          await db.rawUpdate(
-            'UPDATE $quotedTable SET last_error = ?, http_status = ? WHERE lote_id = ?',
-            [friendly, null, batchId],
-          );
-          return StockSubmitOutcome.failed(batchId, friendly, null);
-        }
-      }
     }
 
-    final sql = isVenda
-        ? _insertVendaSql(
-            dia,
-            usuario,
-            deposito,
-            lines,
-            idVenda: idVenda,
-            tipoPagamento: tipoPagamento,
-            desconto: desconto,
-          )
-        : _insertInventarioSql(dia, usuario, deposito, lines);
-
-    try {
-      await QueryApi.postSql(sql);
-      await db.rawUpdate(
-        'UPDATE $quotedTable SET send = ?, last_error = ?, http_status = ? WHERE lote_id = ?',
-        [sendOk, null, null, batchId],
-      );
-      return StockSubmitOutcome.ok(batchId);
-    } on QueryApiException catch (e) {
-      final friendly = friendlyErrorMessage(e);
-      await db.rawUpdate(
-        'UPDATE $quotedTable SET last_error = ?, http_status = ? WHERE lote_id = ?',
-        [friendly, e.statusCode, batchId],
-      );
-      return StockSubmitOutcome.failed(batchId, friendly, e.statusCode);
-    } catch (e) {
-      final friendly = friendlyErrorMessage(e);
-      await db.rawUpdate(
-        'UPDATE $quotedTable SET last_error = ?, http_status = ? WHERE lote_id = ?',
-        [friendly, null, batchId],
-      );
-      return StockSubmitOutcome.failed(batchId, friendly, null);
-    }
+    return _send(
+      db: db,
+      quotedTable: quotedTable,
+      loteId: batchId,
+      remote: () => isVenda
+          ? _enviarVenda(
+              batchId,
+              dia,
+              usuario,
+              deposito,
+              lines,
+              tipoPagamento: tipoPagamento,
+              desconto: desconto,
+            )
+          : _enviarInventario(batchId, dia, usuario, deposito, lines),
+    );
   }
 }
+
+typedef _Enviar = Future<int?> Function(
+  String loteId,
+  String dia,
+  String usuario,
+  String deposito,
+  List<ScannedLine> lines,
+);

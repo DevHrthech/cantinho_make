@@ -74,7 +74,11 @@ CREATE TABLE inventarioproduto (
     final opened = await openDatabase(
       targetPath,
       readOnly: false,
-      onOpen: (db) async => _ensureOutboundTables(db),
+      onOpen: (db) async {
+        await _ensureOutboundTables(db);
+        // Versões antigas baixavam todos os usuários com senha; o login agora é no servidor.
+        await db.delete('usuarios');
+      },
     );
     _db = opened;
     return opened;

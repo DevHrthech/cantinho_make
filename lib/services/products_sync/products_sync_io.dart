@@ -3,17 +3,14 @@ import 'dart:async';
 import 'package:sqflite/sqflite.dart';
 
 import '../local_db.dart';
-import '../query_api.dart';
+import '../api_client.dart';
 
 class ProductsSyncService {
   const ProductsSyncService();
 
-  static const String _sql =
-      'SELECT Codigo_Interno, codigo_barra, nome, preco_venda, status FROM produtos';
-
   Future<int> syncProdutos() async {
-    final payload = await QueryApi.postSql(_sql);
-    final rows = QueryApi.coerceRows(payload);
+    final payload = await ApiClient.get('/produtos');
+    final rows = ApiClient.rows(payload);
 
     final db = (await LocalDb.instance.database) as Database;
 

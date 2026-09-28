@@ -394,7 +394,6 @@ class _StockOperationScreenState extends State<StockOperationScreen> {
     setState(() => _submitting = true);
     try {
       final svc = const StockSubmitService();
-      int? idVenda;
       String? tipoPagamento;
       double? valorRecebido;
       String? desconto;
@@ -404,19 +403,12 @@ class _StockOperationScreenState extends State<StockOperationScreen> {
           valorRecebido = _valorRecebidoNumerico();
         }
         desconto = _descontoFormatadoParaRegistro();
-        try {
-          idVenda = await StockSubmitService.fetchNextIdVenda();
-        } catch (_) {
-          // Sem rede: grava localmente; o id é obtido ao reenviar.
-          idVenda = null;
-        }
       }
 
       final outcome = widget.mode == StockOperationMode.saida
           ? await svc.concludeSaida(
               user: widget.user,
               lines: List<ScannedLine>.of(_lines),
-              idVenda: idVenda,
               tipoPagamento: tipoPagamento,
               valorRecebido: valorRecebido,
               desconto: desconto,

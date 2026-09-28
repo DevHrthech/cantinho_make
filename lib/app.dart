@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'models/session_user.dart';
+import 'services/auth_service.dart';
 import 'services/biometric_login_service.dart';
 import 'screens/admin/admin_shell.dart';
 import 'screens/login_screen.dart';
@@ -20,6 +21,7 @@ class _CantinhoAppState extends State<CantinhoApp> {
   SessionUser? _user;
 
   void _logout() {
+    AuthService.logout();
     unawaited(BiometricLoginService.clearStoredCredentials());
     setState(() => _user = null);
   }

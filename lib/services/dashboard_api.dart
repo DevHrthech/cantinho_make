@@ -1,4 +1,4 @@
-import 'query_api.dart';
+import 'api_client.dart';
 
 /// Linha de produto mais vendido (barra com meta de unidades).
 class DashboardTopProduto {
@@ -33,22 +33,6 @@ class DashboardSnapshot {
 }
 
 abstract final class DashboardApi {
-  static const _sqlTotalVendido = r'''
-SELECT SUM(vp.quantidade * pr.preco_venda) AS total_vendido, CONCAT('R$ ', FORMAT(SUM(quantidade * preco_venda), 2, 'pt_BR')) AS total_formatado FROM VendaProdutos vp inner join produtos pr on vp.codigo_barra = pr.codigo_barra;
-''';
-
-  static const _sqlTopProdutos = r'''
-SELECT produto, SUM(quantidade) AS total_unidades FROM VendaProdutos GROUP BY produto ORDER BY total_unidades DESC LIMIT 4;
-''';
-
-  static const _sqlDepositos = r'''
-select COUNT(*) as quantidade_depositos from depositos where status = 'Ativo' 
-''';
-
-  static const _sqlUsuarios = r'''
-select COUNT(*) as quantidade_usuarios from usuarios where status = 'Ativo' 
-''';
-
   static dynamic _cell(Map<String, dynamic> row, String column) {
     for (final e in row.entries) {
       if (e.key.toLowerCase() == column.toLowerCase()) return e.value;
@@ -75,43 +59,26 @@ select COUNT(*) as quantidade_usuarios from usuarios where status = 'Ativo'
   }
 
   static Future<DashboardSnapshot> load() async {
-    final payloads = await Future.wait<dynamic>([
-      QueryApi.postSql(_sqlTotalVendido.trim()),
-      QueryApi.postSql(_sqlTopProdutos.trim()),
-      QueryApi.postSql(_sqlDepositos.trim()),
-      QueryApi.postSql(_sqlUsuarios.trim()),
-    ]);
+    final d = ApiClient.item(await ApiClient.get('/dashboard'));
 
-    final totalRows = QueryApi.coerceRows(payloads[0]);
-    String totalFormatado = '—';
-    if (totalRows.isNotEmpty) {
-      final raw = _cell(totalRows.first, 'total_formatado');
-      if (raw != null && raw.toString().trim().isNotEmpty) {
-        totalFormatado = raw.toString().trim();
-      }
-    }
+    final raw = _cell(d, 'total_formatado');
+    final totalFormatado =
+        raw != null && raw.toString().trim().isNotEmpty ? raw.toString().trim() : '—';
 
-    final topRows = QueryApi.coerceRows(payloads[1]);
-    final topProdutos = topRows.map((row) {
+    final topRaw = _cell(d, 'top_produtos');
+    final topProdutos = (topRaw is List ? topRaw : const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .map((row) {
       final nome = _cell(row, 'produto')?.toString().trim() ?? '';
       final u = _parseNum(_cell(row, 'total_unidades'));
       return DashboardTopProduto(nome: nome.isEmpty ? '(sem nome)' : nome, unidades: u);
     }).toList();
 
-    final depRows = QueryApi.coerceRows(payloads[2]);
-    final depositosAtivos = depRows.isEmpty
-        ? 0
-        : _parseCount(_cell(depRows.first, 'quantidade_depositos'));
-
-    final usrRows = QueryApi.coerceRows(payloads[3]);
-    final usuariosAtivos = usrRows.isEmpty
-        ? 0
-        : _parseCount(_cell(usrRows.first, 'quantidade_usuarios'));
-
     return DashboardSnapshot(
       totalFormatado: totalFormatado,
-      usuariosAtivos: usuariosAtivos,
-      depositosAtivos: depositosAtivos,
+      usuariosAtivos: _parseCount(_cell(d, 'usuarios_ativos')),
+      depositosAtivos: _parseCount(_cell(d, 'depositos_ativos')),
       topProdutos: topProdutos,
     );
   }

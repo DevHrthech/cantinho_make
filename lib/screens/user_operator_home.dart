@@ -114,7 +114,7 @@ class _UserOperatorHomeState extends State<UserOperatorHome> {
   }
 
   String _errorCode(Object e) {
-    // QueryApiException: QueryApiException(statusCode: 500, message: ...)
+    // ApiException: ApiException(statusCode: 500, message: ...)
     final s = e.toString();
     final match = RegExp(r'statusCode:\s*(\d+)').firstMatch(s);
     if (match != null) return match.group(1)!;
@@ -123,7 +123,7 @@ class _UserOperatorHomeState extends State<UserOperatorHome> {
 
   String _errorMessage(Object e) {
     final s = e.toString();
-    // tenta extrair o message do QueryApiException
+    // tenta extrair o message do ApiException
     final match = RegExp(r'message:\s*(.*)\)$').firstMatch(s);
     if (match != null) return match.group(1)!.trim();
     return s;

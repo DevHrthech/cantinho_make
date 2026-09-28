@@ -1,5 +1,7 @@
 import 'package:http/http.dart' as http;
 
+import 'api_client.dart';
+
 /// Falha no upload (`step: upload`) ou na importação (`step: importar`).
 class ProductsImportException implements Exception {
   ProductsImportException(
@@ -18,13 +20,11 @@ class ProductsImportException implements Exception {
 }
 
 abstract final class ProductsImportApi {
-  static const _authHeader = 'Bearer cheqmais';
   static final _uploadUri = Uri.parse('https://cantinhomake.com.br/api/upload-xls');
   static final _importUri = Uri.parse('https://cantinhomake.com.br/api/importar-produtos');
 
-  static Map<String, String> get _headers => {
-        'Authorization': _authHeader,
-      };
+  /// Token do administrador logado.
+  static Map<String, String> get _headers => ApiClient.authHeaders();
 
   static String _shortMessage(String body, {int max = 450}) {
     final t = body.trim();
@@ -41,7 +41,7 @@ abstract final class ProductsImportApi {
     req.headers.addAll(_headers);
     req.files.add(
       await http.MultipartFile.fromPath(
-        'xls',
+        'xls_file',
         filePath,
         filename: fileName,
       ),
@@ -65,7 +65,7 @@ abstract final class ProductsImportApi {
     req.headers.addAll(_headers);
     req.files.add(
       http.MultipartFile.fromBytes(
-        'xls',
+        'xls_file',
         bytes,
         filename: fileName.isEmpty ? 'produtos.csv' : fileName,
       ),

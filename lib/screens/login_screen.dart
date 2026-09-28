@@ -5,6 +5,7 @@ import '../models/session_user.dart';
 import '../services/auth_service.dart';
 import '../services/biometric_login_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/friendly_error_message.dart';
 import '../widgets/app_shell_background.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/glass_card.dart';
@@ -88,7 +89,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Erro (${e.runtimeType}): $e');
+      setState(() => _error = friendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _bioBusy = false);
     }
@@ -140,7 +141,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Erro (${e.runtimeType}): $e');
+      setState(() => _error = friendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
