@@ -1,15 +1,13 @@
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/product.dart';
 import '../../services/products_api.dart';
-import '../../services/products_import_api.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_money.dart';
+import '../../utils/friendly_error_message.dart';
 import '../../widgets/app_loading_indicator.dart';
 import '../../widgets/glass_card.dart';
-import 'product_form_screen.dart';
+import 'product_detail_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -24,7 +22,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   int _page = 0;
   final _searchCtrl = TextEditingController();
   String? _query;
-  bool _importBusy = false;
+  bool _syncBusy = false;
 
   @override
   void initState() {
@@ -43,98 +41,35 @@ class _ProductsScreenState extends State<ProductsScreen> {
     await _future;
   }
 
-  Future<void> _openEdit(int codigoInterno) async {
-    final ok = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => ProductFormScreen.edit(codigoInterno: codigoInterno),
-      ),
-    );
-    if (ok == true) _refresh();
-  }
-
-  Future<void> _showImportError(Object e) async {
-    final isImp = e is ProductsImportException;
-    final code = isImp && e.statusCode != null
-        ? 'HTTP ${e.statusCode}'
-        : (isImp && (e.step ?? '').isNotEmpty ? e.step! : e.runtimeType.toString());
-    final msg = isImp ? e.message : e.toString();
-    final prefix = isImp && (e.step ?? '').isNotEmpty ? 'Etapa: ${e.step}\n\n' : '';
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Erro na importação'),
-        content: SingleChildScrollView(
-          child: Text('$prefix''Código: $code\n\n$msg'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Ok')),
-        ],
+  Future<void> _openDetail(int codigoInterno) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProductDetailScreen(codigoInterno: codigoInterno),
       ),
     );
   }
 
-  Future<void> _importarProdutos() async {
-    if (_importBusy) return;
-    setState(() => _importBusy = true);
+  /// Puxa agora o cadastro do Bling (o servidor também faz isso a cada 15 minutos).
+  Future<void> _sincronizarBling() async {
+    if (_syncBusy) return;
+    setState(() => _syncBusy = true);
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['csv', 'xls', 'xlsx'],
-        withData: kIsWeb,
-      );
+      final r = await ProductsApi.sincronizarBling();
       if (!mounted) return;
-      if (result == null || result.files.isEmpty) return;
-
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) {
-          return PopScope(
-            canPop: false,
-            child: AlertDialog(
-              content: Row(
-                children: [
-                  const AppLoadingIndicator(size: 40),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      'Enviando arquivo e importando produtos…',
-                      style: Theme.of(ctx).textTheme.bodyMedium,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+      await _refresh();
+      if (!mounted) return;
+      final pendentes = r['pendentes'] ?? 0;
+      final msg = 'Bling: ${r['criados'] ?? 0} novo(s), ${r['atualizados'] ?? 0} atualizado(s), '
+          '${r['inativados'] ?? 0} inativado(s).'
+          '${pendentes > 0 ? ' Ainda faltam $pendentes; toque de novo para continuar.' : ''}';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível sincronizar: ${friendlyErrorMessage(e)}')),
       );
-
-      try {
-        final f = result.files.single;
-        if (f.path != null && f.path!.isNotEmpty) {
-          await ProductsImportApi.uploadXls(filePath: f.path!, fileName: f.name);
-        } else if (f.bytes != null) {
-          await ProductsImportApi.uploadXlsBytes(bytes: f.bytes!, fileName: f.name);
-        } else {
-          throw ProductsImportException(
-            'Não foi possível ler o arquivo neste dispositivo.',
-          );
-        }
-        await ProductsImportApi.importarProdutos();
-        if (!mounted) return;
-        Navigator.of(context).pop();
-        if (!mounted) return;
-        await _refresh();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Importação concluída.')),
-        );
-      } catch (e) {
-        if (mounted) Navigator.of(context).pop();
-        if (mounted) await _showImportError(e);
-      }
     } finally {
-      if (mounted) setState(() => _importBusy = false);
+      if (mounted) setState(() => _syncBusy = false);
     }
   }
 
@@ -204,7 +139,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Produtos cadastrados (API).',
+                    'Produtos sincronizados do Bling. Cadastro e alterações são feitos no Bling.',
                     style: Theme.of(context)
                         .textTheme
                         .bodyMedium
@@ -217,11 +152,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.tonalIcon(
-                        onPressed: (loading || _importBusy) ? null : _importarProdutos,
-                        icon: _importBusy
+                        onPressed: (loading || _syncBusy) ? null : _sincronizarBling,
+                        icon: _syncBusy
                             ? const AppLoadingIndicator(size: 18)
-                            : const Icon(Icons.upload_file_rounded, size: 18),
-                        label: const Text('Importar produtos'),
+                            : const Icon(Icons.sync_rounded, size: 18),
+                        label: const Text('Sincronizar com Bling'),
                         style: FilledButton.styleFrom(
                           foregroundColor: AppColors.cream,
                           backgroundColor: Colors.white.withValues(alpha: 0.08),
@@ -377,9 +312,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                     ),
                                   ),
                                   IconButton(
-                                    tooltip: 'Editar',
-                                    onPressed: () => _openEdit(p.codigoInterno),
-                                    icon: const Icon(Icons.edit_rounded, color: AppColors.cream),
+                                    tooltip: 'Detalhes',
+                                    onPressed: () => _openDetail(p.codigoInterno),
+                                    icon: const Icon(Icons.visibility_rounded, color: AppColors.cream),
                                   ),
                                 ],
                               ),
@@ -437,7 +372,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
                     final source = _ProductsTableSource(
                       products: data,
-                      onEdit: _openEdit,
+                      onOpen: _openDetail,
                       context: context,
                     );
 
@@ -537,12 +472,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
 class _ProductsTableSource extends DataTableSource {
   _ProductsTableSource({
     required this.products,
-    required this.onEdit,
+    required this.onOpen,
     required this.context,
   });
 
   final List<Product> products;
-  final Future<void> Function(int codigoInterno) onEdit;
+  final Future<void> Function(int codigoInterno) onOpen;
   final BuildContext context;
 
   @override
@@ -576,9 +511,9 @@ class _ProductsTableSource extends DataTableSource {
         ),
         DataCell(
           IconButton(
-            tooltip: 'Editar',
-            onPressed: () => onEdit(p.codigoInterno),
-            icon: const Icon(Icons.edit_rounded, color: AppColors.cream),
+            tooltip: 'Detalhes',
+            onPressed: () => onOpen(p.codigoInterno),
+            icon: const Icon(Icons.visibility_rounded, color: AppColors.cream),
           ),
         ),
       ],

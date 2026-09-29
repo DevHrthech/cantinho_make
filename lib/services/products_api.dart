@@ -15,22 +15,10 @@ abstract final class ProductsApi {
     return Product.fromRow(ApiClient.item(payload));
   }
 
-  static Future<void> update({
-    required int codigoInterno,
-    required String nome,
-    required String nomeAbreviado,
-    required String codigoBarra,
-    required double precoCusto,
-    required double precoVenda,
-    required String status,
-  }) async {
-    await ApiClient.put('/produtos/$codigoInterno', {
-      'nome': nome,
-      'nome_abreviado': nomeAbreviado,
-      'codigo_barra': codigoBarra,
-      'preco_custo': double.parse(precoCusto.toStringAsFixed(2)),
-      'preco_venda': double.parse(precoVenda.toStringAsFixed(2)),
-      'status': status,
-    });
+  /// Atualiza agora a tabela de produtos do servidor com o cadastro do Bling.
+  /// Retorna o resumo: criados, atualizados, vinculados, inativados, pendentes, erros.
+  static Future<Map<String, int>> sincronizarBling() async {
+    final payload = await ApiClient.post('/bling/sincronizar-produtos', const {});
+    return ApiClient.item(payload).map((k, v) => MapEntry(k, v is num ? v.toInt() : 0));
   }
 }

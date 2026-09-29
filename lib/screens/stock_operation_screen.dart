@@ -27,20 +27,8 @@ class StockOperationScreen extends StatefulWidget {
 
 class _StockOperationScreenState extends State<StockOperationScreen> {
   static const _formasPagamento = ['PIX', 'Dinheiro', 'Crédito', 'Débito'];
-  static const _parcelasOpcoes = [
-    'Avista',
-    '2X',
-    '3X',
-    '4X',
-    '5X',
-    '6X',
-    '7X',
-    '8X',
-    '9X',
-    '10X',
-    '11X',
-    '12X',
-  ];
+  // Até 4x: é o que está cadastrado no Bling.
+  static const _parcelasOpcoes = ['Avista', '2X', '3X', '4X'];
   static const _descontoOpcoes = ['Não', 'Sim'];
   static const _descontoTipoOpcoes = <String>['Porcentagem', r'Valor (R$)'];
 
